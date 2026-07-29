@@ -1,0 +1,35 @@
+"""STT provider interface — mirrors design doc `### Provider registry
+behavior` (capability-based branching) and `### Turn-taking policy`
+(STT algorithm) (T4).
+
+Concrete Gemini/OpenAI adapters implement this protocol once the provider
+spike pins models/endpoints. `backend/stt/algorithm.py` never branches on
+which vendor is active, only on `supports_partial_streaming` -- this is
+what keeps the "no vendor-specific semantics in the orchestrator" rule (see
+design doc Barge-in sequence / Cancel scope boundary) honest for STT too.
+"""
+
+from __future__ import annotations
+
+from typing import AsyncIterator, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class STTProvider(Protocol):
+    @property
+    def supports_partial_streaming(self) -> bool:
+        """True for providers with a true partial-streaming transcription
+        API; False for batch/chunked-only providers. The algorithm branches
+        on this flag, never on vendor identity."""
+        ...
+
+    def stream_partials(self, utterance_id: str) -> AsyncIterator[str]:
+        """True-streaming providers only (`supports_partial_streaming ==
+        True`). Yields partial transcripts as they arrive."""
+        ...
+
+    async def transcribe_chunk(self, utterance_id: str, chunk_index: int) -> str:
+        """Batch/chunked providers only (`supports_partial_streaming ==
+        False`). Called at most once at a time by `run_chunked_stt` -- the
+        caller never starts chunk N+1 before this returns for chunk N."""
+        ...
