@@ -78,6 +78,11 @@ class SessionRuntime:
         self.session: Session | None = None
         self._endpoint_event: asyncio.Event | None = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        # Accumulated s16le/16k mic audio for the current utterance -- most
+        # batch STT providers (Gemini included) have no notion of resuming
+        # a prior partial transcription, so each chunk re-sends everything
+        # captured so far (see stt/algorithm.py's GetAudio contract).
+        self._utterance_pcm = bytearray()
 
         self.connection = ConnectionManager(
             transport=transport,
@@ -112,12 +117,16 @@ class SessionRuntime:
             session.current_utterance_id = uuid.uuid4().hex
             session.fsm.handle(VoiceEvent.VAD_SPEECH)
             self._endpoint_event = asyncio.Event()
+            self._utterance_pcm = bytearray(binary_frame.pcm)
             self._fire(self._emit_state_change())
             self.connection.spawn_utterance(InboundFrame(UTTERANCE_READY, data=session.current_utterance_id))
         elif vad_event is VadEvent.ENDPOINT and session.fsm.state is VoiceState.SPEECH_DETECTED:
+            self._utterance_pcm.extend(binary_frame.pcm)
             self._vad.reset()
             if self._endpoint_event is not None:
                 self._endpoint_event.set()
+        elif session.fsm.state is VoiceState.SPEECH_DETECTED:
+            self._utterance_pcm.extend(binary_frame.pcm)
 
     def _handle_text_frame(self, envelope: dict) -> None:
         msg_type = envelope.get("type")
@@ -202,7 +211,7 @@ class SessionRuntime:
             def on_partial(text: str) -> None:
                 self._fire(self._emit("transcript.partial", {"text": text, "utterance_id": _uid}))
 
-            text = await run_stt(self._stt_provider, _uid, on_partial, endpoint)
+            text = await run_stt(self._stt_provider, _uid, on_partial, endpoint, lambda: bytes(self._utterance_pcm))
             if not endpoint.is_set():
                 # True-streaming providers finish their own iterator
                 # independently of VAD; wait for the endpoint here too, so

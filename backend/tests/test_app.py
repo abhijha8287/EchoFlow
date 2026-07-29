@@ -61,6 +61,23 @@ class FakeStreamingSTT:
             yield partial
 
 
+class FakeBatchSTT:
+    """Batch/chunked fake (supports_partial_streaming == False) that records
+    every `pcm` snapshot it's called with, so tests can verify
+    SessionRuntime actually accumulates and forwards real captured mic
+    audio -- not just that some placeholder gets threaded through."""
+
+    supports_partial_streaming = False
+
+    def __init__(self, transcript: str) -> None:
+        self._transcript = transcript
+        self.received_pcm: list[bytes] = []
+
+    async def transcribe_chunk(self, utterance_id: str, chunk_index: int, pcm: bytes) -> str:
+        self.received_pcm.append(pcm)
+        return self._transcript
+
+
 async def fake_llm(utterance_id: str, transcript: str) -> str:
     return f"response to: {transcript}"
 
@@ -161,6 +178,56 @@ def test_full_turn_walks_fsm_and_emits_transcript_and_audio_in_order(tmp_path):
     llm_index = next(i for i, (kind, m) in enumerate(messages) if kind == "text" and m["type"] == "llm.token")
     assert messages[llm_index][1]["payload"]["text"] == "response to: hello world"
     assert final_index < llm_index < audio_index
+
+
+def test_batch_stt_provider_receives_real_accumulated_mic_pcm(tmp_path):
+    """A batch/chunked STTProvider (e.g. Gemini) has no notion of resuming a
+    prior partial transcription -- each transcribe_chunk() call must see the
+    real audio SessionRuntime has captured so far, not a placeholder. This
+    is the wiring real adapters (backend/stt/gemini.py) depend on."""
+    session_store = SessionStore()
+    metrics = MetricsLog(path=tmp_path / "metrics-runs.jsonl", run_id="test-run")
+    batch_stt = FakeBatchSTT("hello world")
+    providers = Providers(
+        vad_factory=ScriptedVad,
+        stt_provider=batch_stt,
+        llm=fake_llm,
+        tts=fake_tts,
+        provider_names={"stt": "fake", "llm": "fake", "tts": "fake"},
+    )
+    app = create_app(session_store=session_store, metrics=metrics, providers=providers)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/voice") as ws:
+        ws.send_text(encode_text_frame(type="session.start", session_id="", ts=0, payload={"mode": "continuous"}))
+        _receive(ws)  # session.hello
+        _receive(ws)  # state.change LISTENING
+
+        ws.send_bytes(_mic_frame(b"SPEECH", seq=1))
+        # Wait for the first transcript.partial -- concrete proof that
+        # transcribe_chunk() has already been called at least once, so the
+        # assertion below isn't racing the utterance task's own scheduling.
+        # At this point in the test only the SPEECH frame has been sent, so
+        # this first call can only have seen exactly that.
+        _drain_until(ws, predicate=lambda kind, payload: kind == "text" and payload["type"] == "transcript.partial")
+
+        assert batch_stt.received_pcm
+        assert batch_stt.received_pcm[0] == b"SPEECH"
+
+        ws.send_bytes(_mic_frame(b"ENDPOINT", seq=2))
+        _drain_until(
+            ws,
+            predicate=lambda kind, payload: kind == "text"
+            and payload["type"] == "state.change"
+            and payload["payload"]["state"] == "LISTENING",
+        )
+
+    # Every call SessionRuntime made must be a prefix of the next -- the
+    # accumulated buffer only ever grows, never loses or reorders audio --
+    # and the final snapshot must include everything sent, in order.
+    for earlier, later in zip(batch_stt.received_pcm, batch_stt.received_pcm[1:]):
+        assert later.startswith(earlier)
+    assert batch_stt.received_pcm[-1] == b"SPEECHENDPOINT"
 
 
 def test_malformed_binary_frame_gets_invalid_frame_error_not_a_dead_connection(tmp_path):

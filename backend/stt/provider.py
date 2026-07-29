@@ -36,8 +36,15 @@ class STTProvider(Protocol):
         True`). Yields partial transcripts as they arrive."""
         ...
 
-    async def transcribe_chunk(self, utterance_id: str, chunk_index: int) -> str:
+    async def transcribe_chunk(self, utterance_id: str, chunk_index: int, pcm: bytes) -> str:
         """Batch/chunked providers only (`supports_partial_streaming ==
         False`). Called at most once at a time by `run_chunked_stt` -- the
-        caller never starts chunk N+1 before this returns for chunk N."""
+        caller never starts chunk N+1 before this returns for chunk N.
+
+        `pcm` is the *accumulated* s16le/16k audio for this utterance so
+        far (from utterance start through the current chunk boundary), not
+        just the newest slice -- providers with no notion of resuming a
+        prior partial transcription (e.g. Gemini's generateContent) need
+        the whole thing each call anyway, and this keeps the provider
+        itself stateless: the caller (SessionRuntime) owns the buffer."""
         ...

@@ -32,6 +32,7 @@ MIN_CHUNK_INTERVAL_S = 0.8
 MAX_CHUNK_INTERVAL_S = 1.0
 
 OnPartial = Callable[[str], None]
+GetAudio = Callable[[], bytes]
 
 
 async def run_streaming_stt(provider: STTProvider, utterance_id: str, on_partial: OnPartial) -> str:
@@ -51,6 +52,7 @@ async def run_chunked_stt(
     utterance_id: str,
     on_partial: OnPartial,
     endpoint: asyncio.Event,
+    get_audio: GetAudio,
     min_interval_s: float = MIN_CHUNK_INTERVAL_S,
 ) -> str:
     """Drive a batch/chunked `STTProvider` under the capped-concurrency rule.
@@ -58,12 +60,24 @@ async def run_chunked_stt(
     Loops until `endpoint` is set (the VAD endpoint has been reached),
     awaiting each `transcribe_chunk()` call fully before starting the next
     -- at most one request in flight at any time -- and never starting a new
-    chunk sooner than `min_interval_s` after the previous one started.
+    chunk sooner than `min_interval_s` after the previous one started. Each
+    call gets a fresh snapshot of the accumulated utterance audio via
+    `get_audio()` -- most batch providers (e.g. Gemini's generateContent)
+    have no notion of resuming a prior partial transcription, so each chunk
+    re-sends everything captured so far, not just what's new.
 
     Returns the last partial transcript, which is the unambiguous
     `transcript.final` candidate: because concurrency is capped to 1, there
     is only ever one in-flight response, so there is nothing to disambiguate
     "last" against.
+
+    Always makes one final `transcribe_chunk()` call against the complete
+    buffer once `endpoint` is set, even if that means zero or one prior
+    in-loop calls -- without it, whatever audio arrived after the last
+    in-loop call started (which, for a short utterance, can be *all* of
+    it) would never actually reach the provider, silently truncating the
+    transcript. This final call is not interval-gated: nothing follows it
+    for this utterance, so there is no pileup risk to guard against.
     """
     last_partial = ""
     chunk_index = 0
@@ -71,7 +85,7 @@ async def run_chunked_stt(
 
     while not endpoint.is_set():
         start = loop.time()
-        last_partial = await provider.transcribe_chunk(utterance_id, chunk_index)
+        last_partial = await provider.transcribe_chunk(utterance_id, chunk_index, get_audio())
         on_partial(last_partial)
         chunk_index += 1
 
@@ -85,6 +99,7 @@ async def run_chunked_stt(
             except asyncio.TimeoutError:
                 pass  # interval elapsed with no endpoint yet -> start next chunk
 
+    last_partial = await provider.transcribe_chunk(utterance_id, chunk_index, get_audio())
     return last_partial
 
 
@@ -93,9 +108,13 @@ async def run_stt(
     utterance_id: str,
     on_partial: OnPartial,
     endpoint: asyncio.Event,
+    get_audio: GetAudio,
 ) -> str:
     """Top-level dispatcher: branch on `supports_partial_streaming`, not on
-    vendor identity (see module docstring)."""
+    vendor identity (see module docstring). `get_audio` is only used by the
+    chunked path -- true-streaming providers get audio pushed to them some
+    other way (unresolved until a real streaming provider exists; every
+    provider wired so far, Gemini included, is batch/chunked)."""
     if provider.supports_partial_streaming:
         return await run_streaming_stt(provider, utterance_id, on_partial)
-    return await run_chunked_stt(provider, utterance_id, on_partial, endpoint)
+    return await run_chunked_stt(provider, utterance_id, on_partial, endpoint, get_audio)
