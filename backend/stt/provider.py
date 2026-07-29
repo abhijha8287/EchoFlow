@@ -13,13 +13,26 @@ from __future__ import annotations
 
 from typing import AsyncIterator, Protocol, runtime_checkable
 
+from websocket import errors
+
 
 class RateLimitedError(Exception):
     """Raised by a batch/chunked `STTProvider.transcribe_chunk()` on a 429
     (or equivalent) response. `run_chunked_stt` does not catch or retry this
     -- it propagates immediately out of the algorithm, which is what keeps
     the capped-concurrency guarantee honest under a rate limit: there is no
-    retry loop that could pile up further requests behind the failed one."""
+    retry loop that could pile up further requests behind the failed one.
+
+    Lives here for historical reasons (T4, STT-first), but is the shared
+    exception for all three provider roles -- LLM/TTS adapters raise it too
+    (see backend/llm/gemini.py, backend/tts/gemini.py) rather than each
+    defining their own. `.code`/`.retriable` let SessionRuntime's generic
+    exception handler (voice/session_runtime.py's `_emit_provider_error`)
+    surface the correct `RATE_LIMITED` wire error code instead of the
+    generic `PROVIDER_ERROR` fallback."""
+
+    code = errors.RATE_LIMITED
+    retriable = True
 
 
 @runtime_checkable

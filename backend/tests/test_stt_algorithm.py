@@ -106,6 +106,18 @@ def test_chunk_interval_constants_are_within_800ms_to_1s():
     assert MIN_CHUNK_INTERVAL_S <= MAX_CHUNK_INTERVAL_S
 
 
+def test_rate_limited_error_carries_the_wire_error_code():
+    """Without a `.code` attribute, SessionRuntime's generic exception
+    handler (`_emit_provider_error`) falls back to the generic
+    PROVIDER_ERROR code instead of the more specific RATE_LIMITED the
+    design doc's error codes table defines -- this pins the fix."""
+    from websocket.errors import RATE_LIMITED
+
+    exc = RateLimitedError("429")
+    assert exc.code == RATE_LIMITED
+    assert exc.retriable is True
+
+
 def test_chunked_stt_never_has_more_than_one_request_in_flight():
     asyncio.run(_chunked_stt_never_has_more_than_one_request_in_flight())
 
