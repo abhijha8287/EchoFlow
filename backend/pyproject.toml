@@ -3,11 +3,15 @@ name = "voice-to-voice-backend"
 version = "0.1.0"
 description = "Ultra-low-latency voice-to-voice AI assistant — FastAPI backend"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.30"]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.30",
+    "google-genai>=1.0",
+    "python-dotenv>=1.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27"]
-spike = ["google-genai>=1.0", "python-dotenv>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -20,4 +24,4 @@ build-backend = "setuptools.build_meta"
 py-modules = ["app"]
 
 [tool.setuptools.packages.find]
-include = ["websocket*", "voice*", "stt*", "services*", "utils*", "core*", "spike*"]
+include = ["websocket*", "voice*", "stt*", "services*", "utils*", "core*", "spike*", "llm*", "tts*"]
