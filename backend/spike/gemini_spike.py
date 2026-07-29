@@ -109,10 +109,12 @@ def probe_stt(client, model: str, audio_bytes: bytes) -> dict:
     first_chunk_at: float | None = None
     chunk_count = 0
     text_parts: list[str] = []
+    last_chunk = None
     try:
         for chunk in client.models.generate_content_stream(
             model=model, contents=[audio_part, STT_TRANSCRIBE_PROMPT]
         ):
+            last_chunk = chunk
             if chunk.text:
                 chunk_count += 1
                 if first_chunk_at is None:
@@ -130,6 +132,9 @@ def probe_stt(client, model: str, audio_bytes: bytes) -> dict:
     print(f"  total latency:          {total_ms:.0f}ms")
     print(f"  chunk count:            {chunk_count} ({'true partial streaming' if supports_partial_streaming else 'single batch response'})")
     print(f"  transcript: {transcript!r}")
+    if not transcript and last_chunk is not None and last_chunk.candidates:
+        finish_reason = last_chunk.candidates[0].finish_reason
+        print(f"  no text in response -- finish_reason={finish_reason} (expected for the synthetic tone: no real speech to transcribe)")
     return {
         "ok": True,
         "first_chunk_ms": first_chunk_ms,
@@ -152,11 +157,18 @@ def probe_tts(client, model: str) -> dict:
         ),
     )
 
+    # Gemini's TTS-preview models need the text framed as a read-aloud
+    # instruction ("Say: ...") -- a plain sentence gets treated as a chat
+    # prompt to respond to conversationally, which the model then rejects
+    # since response_modalities=["AUDIO"] forbids a text reply (this is
+    # exactly the INVALID_ARGUMENT this fixed, found by actually running it).
+    tts_prompt = f"Say: {TTS_SENTENCE}"
+
     start = time.monotonic()
     first_byte_at: float | None = None
     audio_bytes = bytearray()
     try:
-        for chunk in client.models.generate_content_stream(model=model, contents=TTS_SENTENCE, config=config):
+        for chunk in client.models.generate_content_stream(model=model, contents=tts_prompt, config=config):
             for candidate in chunk.candidates or []:
                 for part in candidate.content.parts or []:
                     if part.inline_data and part.inline_data.data:
