@@ -14,6 +14,14 @@ from __future__ import annotations
 from typing import AsyncIterator, Protocol, runtime_checkable
 
 
+class RateLimitedError(Exception):
+    """Raised by a batch/chunked `STTProvider.transcribe_chunk()` on a 429
+    (or equivalent) response. `run_chunked_stt` does not catch or retry this
+    -- it propagates immediately out of the algorithm, which is what keeps
+    the capped-concurrency guarantee honest under a rate limit: there is no
+    retry loop that could pile up further requests behind the failed one."""
+
+
 @runtime_checkable
 class STTProvider(Protocol):
     @property

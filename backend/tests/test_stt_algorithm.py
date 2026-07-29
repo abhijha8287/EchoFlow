@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from stt.algorithm import (
     MAX_CHUNK_INTERVAL_S,
     MIN_CHUNK_INTERVAL_S,
@@ -16,6 +18,7 @@ from stt.algorithm import (
     run_stt,
     run_streaming_stt,
 )
+from stt.provider import RateLimitedError
 
 
 class FakeBatchProvider:
@@ -49,6 +52,19 @@ class FakeBatchProvider:
             return text
         finally:
             self._in_flight = False
+
+
+class FakeRateLimitedBatchProvider(FakeBatchProvider):
+    """Batch provider that returns a 429-equivalent on the Nth call."""
+
+    def __init__(self, transcripts: list[str], fail_on_call_index: int) -> None:
+        super().__init__(transcripts, response_delay_s=0.0)
+        self._fail_on_call_index = fail_on_call_index
+
+    async def transcribe_chunk(self, utterance_id: str, chunk_index: int) -> str:
+        if chunk_index == self._fail_on_call_index:
+            raise RateLimitedError("429")
+        return await super().transcribe_chunk(utterance_id, chunk_index)
 
 
 class FakeStreamingProvider:
@@ -179,3 +195,24 @@ async def _run_stt_dispatches_on_capability_flag_not_vendor_identity():
     batch_endpoint = asyncio.Event()
     batch_result = await run_stt(batch_provider, "utt-2", _stop_after_n(batch_endpoint, 1), batch_endpoint)
     assert batch_result == "x"
+
+
+def test_rate_limited_error_surfaces_cleanly_with_no_request_pileup():
+    asyncio.run(_rate_limited_error_surfaces_cleanly_with_no_request_pileup())
+
+
+async def _rate_limited_error_surfaces_cleanly_with_no_request_pileup():
+    """T7: a 429 on the batch endpoint must propagate as RateLimitedError
+    -- no swallow-and-retry loop that could pile requests up behind the
+    failure, which the capped-concurrency design (T4/D3) intentionally does
+    not provide."""
+    provider = FakeRateLimitedBatchProvider(["a", "b"], fail_on_call_index=1)
+    endpoint = asyncio.Event()
+
+    with pytest.raises(RateLimitedError):
+        await run_chunked_stt(provider, "utt-1", lambda _: None, endpoint, min_interval_s=0.01)
+
+    # Exactly the calls up to and including the failing one -- nothing
+    # queued or retried behind it.
+    assert provider.call_count == 1  # chunk 0 succeeded and incremented call_count
+    assert len(provider.start_times) == 1  # chunk 1 raised before recording a start -- nothing else in flight

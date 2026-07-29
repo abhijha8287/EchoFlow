@@ -19,6 +19,15 @@ connection itself, kicking the user off on every interrupt.
 `Transport` is a minimal receive-side seam over the real WS connection (e.g.
 `starlette.websockets.WebSocket`) so `receive_loop()` can be exercised with a
 fake queue in tests instead of a live socket.
+
+`on_frame` (added for T7) is an optional hook invoked for every frame,
+before the built-in MIC_PCM/CONTROL_INTERRUPT/UTTERANCE_READY dispatch below
+-- it lets a caller (e.g. `voice.session_runtime.SessionRuntime`) observe
+every frame and drive FSM/VAD/session logic without needing to fork this
+class's own dispatch. `spawn_utterance()` is the public counterpart, letting
+that same caller start an utterance-scoped task from outside the frame
+dispatch (e.g. on a VAD endpoint detected while handling a mic frame),
+without breaking the independent-task guarantee.
 """
 
 from __future__ import annotations
@@ -30,6 +39,7 @@ from typing import Any, Awaitable, Callable, Protocol
 MIC_PCM = "mic_pcm"
 UTTERANCE_READY = "utterance_ready"
 CONTROL_INTERRUPT = "control_interrupt"
+TEXT = "text"
 
 
 class ConnectionClosed(Exception):
@@ -48,6 +58,7 @@ class Transport(Protocol):
 
 StartUtterance = Callable[[InboundFrame], Awaitable[None]]
 MicFrameHook = Callable[[InboundFrame], None]
+FrameHook = Callable[[InboundFrame], None]
 
 
 class ConnectionManager:
@@ -58,10 +69,12 @@ class ConnectionManager:
         transport: Transport,
         start_utterance: StartUtterance,
         on_mic_frame: MicFrameHook | None = None,
+        on_frame: FrameHook | None = None,
     ) -> None:
         self._transport = transport
         self._start_utterance = start_utterance
         self._on_mic_frame = on_mic_frame
+        self._on_frame = on_frame
         self._utterance_task: asyncio.Task[None] | None = None
 
     @property
@@ -86,7 +99,19 @@ class ConnectionManager:
         """Barge-in: cancel only the in-flight utterance task, if any."""
         self._cancel_current_utterance()
 
+    def spawn_utterance(self, frame: InboundFrame) -> asyncio.Task[None]:
+        """Public entry point for spawning an utterance-scoped task from
+        outside the receive loop's own frame dispatch -- e.g. a caller that
+        detected a VAD endpoint while handling a mic frame via `on_frame`.
+        Same independent-task guarantee as the `UTTERANCE_READY` frame path
+        below (see module docstring)."""
+        self._spawn_utterance_task(frame)
+        assert self._utterance_task is not None
+        return self._utterance_task
+
     def _handle_frame(self, frame: InboundFrame) -> None:
+        if self._on_frame is not None:
+            self._on_frame(frame)
         if frame.kind == MIC_PCM:
             if self._on_mic_frame is not None:
                 self._on_mic_frame(frame)

@@ -1,0 +1,11 @@
+"""Error codes (v1) — mirrors design doc `### Error codes (v1)`."""
+
+from __future__ import annotations
+
+PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+PROVIDER_ERROR = "PROVIDER_ERROR"
+SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+CANCELLED = "CANCELLED"
+INVALID_FRAME = "INVALID_FRAME"
+RATE_LIMITED = "RATE_LIMITED"
+INTERNAL = "INTERNAL"
