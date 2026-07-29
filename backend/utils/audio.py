@@ -21,7 +21,27 @@ need to move.
 
 from __future__ import annotations
 
+import io
+import wave
 from array import array
+
+
+def wrap_pcm_as_wav(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
+    """Wrap raw s16le PCM in a minimal WAV (RIFF) container.
+
+    Some provider APIs (e.g. Gemini's `generateContent` with an inline
+    audio `Part`) accept `audio/wav` but not bare `audio/pcm` for
+    transcription input -- this is the shared version of what would
+    otherwise be duplicated between the STT adapter and
+    `backend/spike/gemini_spike.py`'s STT probe.
+    """
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(2)  # s16le
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm)
+    return buffer.getvalue()
 
 
 def normalize_audio(pcm: bytes, native_rate: int, native_channels: int = 1, target_rate: int = 16000) -> bytes:

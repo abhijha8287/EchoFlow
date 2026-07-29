@@ -11,11 +11,13 @@ implementation's own interpolation formula inside the test.
 
 from __future__ import annotations
 
+import wave
 from array import array
+from io import BytesIO
 
 import pytest
 
-from utils.audio import normalize_audio
+from utils.audio import normalize_audio, wrap_pcm_as_wav
 
 # Representative native TTS rates -- exact spike-measured values (per the
 # design doc's Provider spike) aren't known yet, so this covers the common
@@ -91,3 +93,16 @@ def test_extreme_amplitude_values_do_not_overflow_int16():
 
 def test_empty_input_returns_empty_output():
     assert normalize_audio(b"", native_rate=24000, target_rate=16000) == b""
+
+
+def test_wrap_pcm_as_wav_round_trips_through_the_stdlib_wave_reader():
+    pcm = _constant_pcm(1234, 320)  # 20ms @ 16kHz
+
+    wav_bytes = wrap_pcm_as_wav(pcm, sample_rate=16000)
+
+    with wave.open(BytesIO(wav_bytes), "rb") as wav_file:
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 16000
+        assert wav_file.getnframes() == 320
+        assert wav_file.readframes(320) == pcm

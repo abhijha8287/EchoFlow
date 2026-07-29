@@ -37,14 +37,13 @@ import os
 import struct
 import sys
 import time
-import wave
-from io import BytesIO
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from services.metrics import MetricsLog  # noqa: E402
+from utils.audio import wrap_pcm_as_wav  # noqa: E402
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_METRICS_PATH = BACKEND_DIR / "data" / "metrics-runs.jsonl"
@@ -66,13 +65,7 @@ def _synthesize_placeholder_wav(seconds: float = 2.0, sample_rate: int = 16000) 
     num_samples = int(seconds * sample_rate)
     samples = [int(3000 * math.sin(2 * math.pi * 440 * i / sample_rate)) for i in range(num_samples)]
     pcm = struct.pack(f"<{num_samples}h", *samples)
-    buffer = BytesIO()
-    with wave.open(buffer, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(pcm)
-    return buffer.getvalue()
+    return wrap_pcm_as_wav(pcm, sample_rate=sample_rate)
 
 
 def probe_llm(client, model: str) -> dict:
