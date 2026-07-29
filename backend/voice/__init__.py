@@ -4,10 +4,12 @@ from .fsm import (
     VoiceFSM,
     VoiceState,
 )
+from .pipeline import run_utterance_pipeline
 
 __all__ = [
     "InvalidTransitionError",
     "VoiceEvent",
     "VoiceFSM",
     "VoiceState",
+    "run_utterance_pipeline",
 ]

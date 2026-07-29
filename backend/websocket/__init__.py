@@ -8,6 +8,15 @@ from .codec import (
     decode_text_frame,
     encode_text_frame,
 )
+from .connection import (
+    CONTROL_INTERRUPT,
+    MIC_PCM,
+    UTTERANCE_READY,
+    ConnectionClosed,
+    ConnectionManager,
+    InboundFrame,
+    Transport,
+)
 
 __all__ = [
     "BinaryFrame",
@@ -18,4 +27,11 @@ __all__ = [
     "encode_binary_frame",
     "decode_text_frame",
     "encode_text_frame",
+    "CONTROL_INTERRUPT",
+    "MIC_PCM",
+    "UTTERANCE_READY",
+    "ConnectionClosed",
+    "ConnectionManager",
+    "InboundFrame",
+    "Transport",
 ]
