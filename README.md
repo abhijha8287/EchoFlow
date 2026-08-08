@@ -2,7 +2,7 @@
 
 A voice-to-voice AI assistant. You talk, it listens, thinks, and talks back — over a live WebSocket connection, aiming for the lowest latency I could reasonably get it to.
 
-Right now it runs on Gemini for all three legs (speech-to-text, the LLM, and text-to-speech). Other providers can be plugged in later, the code is written so a provider is just something that implements a small interface.
+It defaults to Gemini for all three legs (speech-to-text, the LLM, and text-to-speech), but OpenAI adapters exist too — each leg is env-switchable independently (`STT_PROVIDER` / `LLM_PROVIDER` / `TTS_PROVIDER`). The code is written so a provider is just something that implements a small interface, so more can be plugged in later.
 
 Made by Abhishek.
 
@@ -24,12 +24,24 @@ cd backend
 pip install -e .
 ```
 
-Create a `backend/.env` file (copy `backend/.env.example`) and put your Gemini key in it:
+Create a `backend/.env` file (copy `backend/.env.example`) and put your API key in it.
+
+For the default Gemini setup:
 
 ```
 GEMINI_API_KEY=your-key-here
 ```
 
+To run on OpenAI instead, set your OpenAI key and point all three legs at it:
+
+```
+OPENAI_API_KEY=your-key-here
+STT_PROVIDER=openai
+LLM_PROVIDER=openai
+TTS_PROVIDER=openai
+```
+
+Each leg picks its provider independently, so you can also mix and match (e.g. `LLM_PROVIDER=openai` while STT/TTS stay on Gemini) — only the API key(s) for whichever provider(s) you actually select are required.
 
 Then run it:
 
@@ -88,11 +100,14 @@ voice-to-voice/
 │   ├── stt/                   # speech-to-text
 │   │   ├── provider.py          # STT interface + shared errors
 │   │   ├── algorithm.py         # chunked vs. streaming STT logic
-│   │   └── gemini.py            # real Gemini STT adapter
+│   │   ├── gemini.py            # real Gemini STT adapter
+│   │   └── openai.py            # real OpenAI STT adapter
 │   ├── llm/
-│   │   └── gemini.py            # real Gemini LLM adapter
+│   │   ├── gemini.py            # real Gemini LLM adapter
+│   │   └── openai.py            # real OpenAI LLM adapter
 │   ├── tts/
-│   │   └── gemini.py            # real Gemini TTS adapter
+│   │   ├── gemini.py            # real Gemini TTS adapter
+│   │   └── openai.py            # real OpenAI TTS adapter
 │   ├── websocket/
 │   │   ├── codec.py              # the wire protocol (binary audio frames + JSON text frames)
 │   │   ├── connection.py         # the WebSocket connection manager
@@ -136,7 +151,7 @@ voice-to-voice/
 
 ## Notes on the current state
 
-- STT/LLM/TTS all use Gemini right now. Swapping in another provider (OpenAI, ElevenLabs, etc.) just means writing a new adapter behind the same interface — nothing else has to change.
+- STT/LLM/TTS default to Gemini but each has an OpenAI adapter too, selectable per role via `STT_PROVIDER`/`LLM_PROVIDER`/`TTS_PROVIDER`. Swapping in yet another provider (ElevenLabs, etc.) just means writing a new adapter behind the same interface — nothing else has to change.
 - VAD is a simple volume-threshold detector, not a real speech-detection model yet.
 - The LLM doesn't remember earlier turns in the conversation yet — every request is stateless.
 - The UI is intentionally plain right now (just shows the state and transcript), no animations or polish yet.
