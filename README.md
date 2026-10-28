@@ -1,144 +1,74 @@
 # EchoFlow
 
-A voice-to-voice AI assistant. You talk, it listens, thinks, and talks back — over a live WebSocket connection, aiming for the lowest latency I could reasonably get it to.
+A voice-to-voice AI assistant: you speak, it listens, thinks and speaks back over a live WebSocket, with latency kept as low as possible.
 
-It defaults to Gemini for all three legs (speech-to-text, the LLM, and text-to-speech), but OpenAI adapters exist too — each leg is env-switchable independently (`STT_PROVIDER` / `LLM_PROVIDER` / `TTS_PROVIDER`). The code is written so a provider is just something that implements a small interface, so more can be plugged in later.
+## Why this exists
+A project to learn what it takes to make a real-time voice assistant feel responsive: voice activity detection, turn-taking, interruptions and streaming audio in both directions.
 
-Made by Abhishek.
+## What it does
+- Streams microphone audio from the browser to a FastAPI backend over one WebSocket (`/ws/voice`)
+- Detects speech with voice activity detection and runs a conversation state machine (idle, listening, thinking, speaking)
+- Runs speech-to-text, the LLM and text-to-speech for each utterance and streams the reply audio back
+- Uses Gemini for all three steps by default; each step can switch to OpenAI on its own through env settings
+- Keeps session state across reconnects and logs latency for each step
 
-## What's actually in here
+## Project structure
+```
+EchoFlow/
+├── backend/
+│   ├── main.py         Server entry point
+│   ├── app.py          FastAPI app and WebSocket route
+│   ├── core/           Session state and store
+│   ├── voice/          State machine, VAD, pipeline
+│   ├── stt/            Speech-to-text adapters
+│   ├── llm/            LLM adapters (Gemini, OpenAI)
+│   ├── tts/            Text-to-speech adapters
+│   ├── websocket/      Wire protocol and connections
+│   ├── services/       Latency metrics logging
+│   ├── utils/          Audio resampling and WAV helpers
+│   ├── spike/          Gemini latency probe script
+│   └── tests/          pytest suite, providers mocked
+└── frontend/
+    ├── app/            Main page
+    ├── hooks/          Mic, playback, session hooks
+    ├── lib/            Protocol, state machine, WS client
+    └── stores/         Client state
+```
 
-- **`backend/`** — Python (FastAPI + WebSockets). Owns the conversation: voice activity detection, a state machine (idle → listening → thinking → speaking, etc.), and the STT → LLM → TTS pipeline.
-- **`frontend/`** — Next.js + React. Captures your mic audio in the browser, streams it to the backend, and plays back whatever audio comes back.
-
-They talk to each other over one WebSocket: `ws://localhost:8000/ws/voice`. Binary frames carry raw audio, JSON text frames carry everything else (state changes, transcripts, errors).
-
-## Running it locally
-
-You need two terminals — one for the backend, one for the frontend.
-
-### 1. Backend
-
+## Getting started
+Requirements: Python 3.12+, Node.js 18+, a Gemini or OpenAI API key, a microphone.
 ```bash
-cd backend
+git clone https://github.com/abhijha8287/EchoFlow.git
+cd EchoFlow
+
+cd backend                                   # terminal 1
 pip install -e .
-```
+cp .env.example .env                         # add GEMINI_API_KEY
+python main.py                               # http://localhost:8000/health
 
-Create a `backend/.env` file (copy `backend/.env.example`) and put your API key in it.
-
-For the default Gemini setup:
-
-```
-GEMINI_API_KEY=your-key-here
-```
-
-To run on OpenAI instead, set your OpenAI key and point all three legs at it:
-
-```
-OPENAI_API_KEY=your-key-here
-STT_PROVIDER=openai
-LLM_PROVIDER=openai
-TTS_PROVIDER=openai
-```
-
-Each leg picks its provider independently, so you can also mix and match (e.g. `LLM_PROVIDER=openai` while STT/TTS stay on Gemini) — only the API key(s) for whichever provider(s) you actually select are required.
-
-Then run it:
-
-```bash
-python main.py
-```
-
-It boots on `http://localhost:8000`. Check `http://localhost:8000/health` — you should see `{"status":"ok"}`.
-
-### 2. Frontend
-
-```bash
-cd frontend
+cd frontend                                  # terminal 2
 npm install
+cp .env.local.example .env.local
+npm run dev                                  # http://localhost:3000
 ```
+Open the page, allow microphone access and talk.
 
-Copy `frontend/.env.local.example` to `frontend/.env.local` — it just points the frontend at your local backend:
+## Configuration
+| Variable | Purpose |
+|:--|:--|
+| `GEMINI_API_KEY` | Default provider for all three steps |
+| `OPENAI_API_KEY` | Needed if any step uses OpenAI |
+| `STT_PROVIDER`, `LLM_PROVIDER`, `TTS_PROVIDER` | `gemini` or `openai`, set per step |
+| `NEXT_PUBLIC_WS_URL` (frontend) | Backend WebSocket, default `ws://localhost:8000/ws/voice` |
 
-```
-NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws/voice
-```
-
-Then run it:
-
+## Tests
 ```bash
-npm run dev
-```
-
-Open `http://localhost:3000`, allow microphone access, and talk.
-
-### Running the tests
-
-```bash
-# backend
 cd backend && python -m pytest
-
-# frontend
 cd frontend && npm run test
 ```
 
-## Folder structure
-
-```
-voice-to-voice/
-├── backend/
-│   ├── main.py              # real boot entrypoint — starts the actual server
-│   ├── app.py                # FastAPI app + WebSocket route wiring
-│   ├── core/
-│   │   └── session.py         # Session + SessionStore (conversation state, survives reconnects)
-│   ├── voice/
-│   │   ├── fsm.py              # the conversation state machine
-│   │   ├── vad.py              # voice-activity-detection interface
-│   │   ├── simple_vad.py       # simple energy-based VAD (placeholder for real Silero VAD)
-│   │   ├── pipeline.py         # runs STT -> LLM -> TTS for one utterance
-│   │   └── session_runtime.py  # the big orchestrator, ties everything together
-│   ├── stt/                   # speech-to-text
-│   │   ├── provider.py          # STT interface + shared errors
-│   │   ├── algorithm.py         # chunked vs. streaming STT logic
-│   │   ├── gemini.py            # real Gemini STT adapter
-│   │   └── openai.py            # real OpenAI STT adapter
-│   ├── llm/
-│   │   ├── gemini.py            # real Gemini LLM adapter
-│   │   └── openai.py            # real OpenAI LLM adapter
-│   ├── tts/
-│   │   ├── gemini.py            # real Gemini TTS adapter
-│   │   └── openai.py            # real OpenAI TTS adapter
-│   ├── websocket/
-│   │   ├── codec.py              # the wire protocol (binary audio frames + JSON text frames)
-│   │   ├── connection.py         # the WebSocket connection manager
-│   │   └── errors.py             # wire error codes
-│   ├── services/
-│   │   └── metrics.py           # latency/metrics logging
-│   ├── utils/
-│   │   └── audio.py             # audio resampling + WAV helpers
-│   ├── spike/
-│   │   └── gemini_spike.py      # standalone script used to probe real Gemini latency/behavior
-│   └── tests/                  # pytest suite (all providers are mocked here, no real API calls)
-│
-└── frontend/
-    ├── app/
-    │   └── page.tsx             # the main (and only, for now) page
-    ├── hooks/
-    │   ├── useMicrophone.ts       # captures mic audio via an AudioWorklet
-    │   ├── usePlayback.ts         # plays back audio from the server
-    │   ├── useVoiceSession.ts     # ties the WebSocket + mic + playback + state together
-    │   └── useKeyboardShortcuts.ts
-    ├── lib/
-    │   ├── protocol.ts            # wire protocol encode/decode (mirrors the backend's codec.py)
-    │   ├── fsm.ts                 # state machine (mirrors the backend's fsm.py)
-    │   ├── ws-client.ts           # WebSocket client with reconnect logic
-    │   └── audio.ts               # audio format helpers
-    ├── stores/
-    │   ├── session.ts             # Zustand store for conversation state
-    │   └── connection.ts          # Zustand store for connection/reconnect state
-    └── public/worklets/
-        └── pcm-capture-processor.js  # AudioWorklet that captures raw mic PCM
-```
+## Tech stack
+Python, FastAPI, WebSockets, Gemini API, OpenAI API, Next.js, React, TypeScript, Zustand, Vitest
 
 ## How a conversation actually flows
 
